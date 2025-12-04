@@ -182,7 +182,7 @@ For issues, questions, or suggestions:
 <img width="1902" height="903" alt="image" src="https://github.com/user-attachments/assets/c1f6627f-fc89-4927-b1eb-6e0a8c504e0f" />
 
 <img width="1900" height="995" alt="Screenshot 2025-12-04 144226" src="https://github.com/user-attachments/assets/4e7bb776-7543-4e41-8013-b2657121cfe4" />
-<img width="1835" height="825" alt="Screenshot 2025-12-04 144254" src="https://github.com/user-attachments/assets/9f9c8dbd-570e-4791-9031-56f46071d468" />
+
 
 
 Made with ❤️ for the OCR community
