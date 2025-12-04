@@ -20,7 +20,6 @@ import {
   X,
   Loader2,
   FolderDown,
-  Save,
 } from "lucide-react";
 
 const OCRDatasetBuilder = () => {
@@ -40,26 +39,27 @@ const OCRDatasetBuilder = () => {
   const [showHelp, setShowHelp] = useState(false);
   const [showKeyboard, setShowKeyboard] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  
-  // Load settings from localStorage on initial render
   const [settings, setSettings] = useState(() => {
-    const savedSettings = localStorage.getItem('ocrSettings');
-    return savedSettings ? JSON.parse(savedSettings) : {
-      apiKey: "",
+    // Load API key from localStorage on initial load
+    const savedApiKey = localStorage.getItem("gemini_api_key") || "";
+    return {
+      apiKey: savedApiKey,
       autoSave: true,
       parallelProcessing: true,
       autoDeskew: true,
     };
   });
 
-  // Save settings to localStorage whenever they change
-  useEffect(() => {
-    localStorage.setItem('ocrSettings', JSON.stringify(settings));
-  }, [settings]);
-
   const canvasRef = useRef(null);
   const imageRef = useRef(null);
   const [imageLoaded, setImageLoaded] = useState(false);
+
+  // Save API key to localStorage whenever it changes
+  useEffect(() => {
+    if (settings.apiKey) {
+      localStorage.setItem("gemini_api_key", settings.apiKey);
+    }
+  }, [settings.apiKey]);
 
   useEffect(() => {
     if (currentView === "annotate" && images.length > 0) {
@@ -238,8 +238,8 @@ const OCRDatasetBuilder = () => {
     try {
       const base64Data = imageDataUrl.split(",")[1];
 
-      // Using correct Gemini model - gemini-1.5-pro or gemini-1.0-pro-vision
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${settings.apiKey}`;
+      // FIXED: Using gemini-2.5-flash (current stable model - Dec 2024)
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.apiKey}`;
 
       const requestBody = {
         contents: [
@@ -265,7 +265,7 @@ const OCRDatasetBuilder = () => {
         },
       };
 
-      console.log("Calling Gemini API...");
+      console.log("Calling Gemini 1.5 Flash API...");
 
       const response = await fetch(apiUrl, {
         method: "POST",
@@ -289,10 +289,10 @@ const OCRDatasetBuilder = () => {
         }
 
         if (response.status === 403) {
-          return `[Error 403: Enable Generative Language API in Google Cloud Console]`;
-        } else if (response.status === 400) {
-          // Try alternative model if gemini-1.5-pro fails
-          return await tryAlternativeModel(base64Data, settings.apiKey);
+          return `[Error 403: Check API key or enable Generative Language API]`;
+        }
+        if (response.status === 400) {
+          return `[Error 400: Invalid request - check API key]`;
         }
 
         return `[HTTP ${response.status}]`;
@@ -322,63 +322,6 @@ const OCRDatasetBuilder = () => {
     } catch (error) {
       console.error("Exception:", error);
       return `[Error: ${error.message}]`;
-    }
-  };
-
-  const tryAlternativeModel = async (base64Data, apiKey) => {
-    // Try gemini-1.0-pro-vision as alternative
-    const alternativeUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro-vision:generateContent?key=${apiKey}`;
-    
-    try {
-      const response = await fetch(alternativeUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                {
-                  text: "Extract all text from this image. Return ONLY the extracted text without any explanation. Support Nepali, Hindi, and English text.",
-                },
-                {
-                  inline_data: {
-                    mime_type: "image/png",
-                    data: base64Data,
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.4,
-            topK: 32,
-            topP: 1,
-            maxOutputTokens: 2048,
-          },
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Alternative model failed: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      if (data.candidates && data.candidates.length > 0) {
-        const candidate = data.candidates[0];
-        if (candidate.content?.parts && candidate.content.parts.length > 0) {
-          const extractedText = candidate.content.parts[0].text?.trim();
-          if (extractedText) {
-            return extractedText;
-          }
-        }
-      }
-      
-      return "[No text detected with alternative model]";
-    } catch (error) {
-      return `[Alternative model failed: ${error.message}]`;
     }
   };
 
@@ -494,12 +437,6 @@ const OCRDatasetBuilder = () => {
         `✅ Exported ${approved.length} image-text pairs!\n\nCheck your Downloads folder.`
       );
     }, approved.length * 200 + 500);
-  };
-
-  const saveSettings = () => {
-    localStorage.setItem('ocrSettings', JSON.stringify(settings));
-    alert("Settings saved successfully!");
-    setCurrentView("home");
   };
 
   return (
@@ -878,10 +815,7 @@ const OCRDatasetBuilder = () => {
               </div>
               {isProcessing && (
                 <div className="absolute bottom-4 left-4 bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center gap-2">
-                  <Loader2
-                    className="w-4 h
-                  4 h-4 animate-spin"
-                  />
+                  <Loader2 className="w-4 h-4 animate-spin" />
                   Extracting...
                 </div>
               )}
@@ -1036,23 +970,41 @@ const OCRDatasetBuilder = () => {
             </div>
           </div>
 
-          <div className="flex-1 flex items-center justify-center p-8">
-            <div className="relative max-w-4xl">
-              <img
-                src={extractedData[reviewIndex].croppedImage}
-                alt="Review"
-                className="rounded-lg shadow-2xl max-w-full border-4 border-gray-300"
-              />
-              <div className="absolute top-4 right-4 bg-black bg-opacity-80 text-white px-4 py-3 rounded-lg shadow-lg">
-                <p className="text-sm font-semibold">
-                  Box #{extractedData[reviewIndex].boxIndex + 1}
-                </p>
-                <p className="text-xs text-gray-300">
-                  {extractedData[reviewIndex].imageName}
-                </p>
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-gray-50">
+            <div className="w-full max-w-5xl">
+              {/* Image Info Header */}
+              <div className="mb-4 flex justify-between items-center bg-white p-4 rounded-lg shadow">
+                <div>
+                  <p className="text-sm font-semibold text-gray-700">
+                    Box #{extractedData[reviewIndex].boxIndex + 1}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {extractedData[reviewIndex].imageName}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`px-3 py-1 rounded-full text-sm font-semibold ${
+                      extractedData[reviewIndex].status === "approved"
+                        ? "bg-green-100 text-green-700"
+                        : extractedData[reviewIndex].status === "rejected"
+                        ? "bg-red-100 text-red-700"
+                        : "bg-blue-100 text-blue-700"
+                    }`}
+                  >
+                    {extractedData[reviewIndex].status.toUpperCase()}
+                  </span>
+                </div>
               </div>
-              <div className="absolute bottom-4 left-4 bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold">
-                Status: {extractedData[reviewIndex].status.toUpperCase()}
+
+              {/* Image Display */}
+              <div className="bg-white p-6 rounded-lg shadow-xl">
+                <img
+                  src={extractedData[reviewIndex].croppedImage}
+                  alt="Review"
+                  className="w-full h-auto rounded-lg border-2 border-gray-200"
+                  style={{ maxHeight: "70vh", objectFit: "contain" }}
+                />
               </div>
             </div>
           </div>
@@ -1089,9 +1041,14 @@ const OCRDatasetBuilder = () => {
                     Google AI Studio
                   </a>
                 </p>
-                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-xs text-green-700 font-semibold">
+                    ✅ API key is saved in your browser locally
+                  </p>
+                </div>
+                <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
                   <p className="text-xs text-red-700 font-semibold">
-                    ⚠️ Keep your API key private! It's saved locally in your browser.
+                    ⚠️ Keep your API key private!
                   </p>
                 </div>
               </div>
@@ -1153,10 +1110,9 @@ const OCRDatasetBuilder = () => {
 
             <div className="mt-8 flex gap-4">
               <button
-                onClick={saveSettings}
-                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold flex items-center justify-center gap-2"
+                onClick={() => setCurrentView("home")}
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold"
               >
-                <Save className="w-5 h-5" />
                 Save & Continue
               </button>
               <button
