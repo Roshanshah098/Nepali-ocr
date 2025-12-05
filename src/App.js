@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Upload,
   Play,
@@ -8,7 +8,6 @@ import {
   Edit2,
   Trash2,
   Eye,
-  Download,
   RotateCw,
   ZoomIn,
   ZoomOut,
@@ -51,11 +50,9 @@ const OCRDatasetBuilder = () => {
 
   const canvasRef = useRef(null);
   const imageRef = useRef(null);
-  const originalImageRef = useRef(null); // Store original unscaled image
   const [imageLoaded, setImageLoaded] = useState(false);
-  const [canvasScale, setCanvasScale] = useState({ x: 1, y: 1 }); // Track canvas scaling
 
-  // Save API key to localStorage whenever it changes
+  // Save API key
   useEffect(() => {
     if (settings.apiKey) {
       localStorage.setItem("gemini_api_key", settings.apiKey);
@@ -68,60 +65,8 @@ const OCRDatasetBuilder = () => {
     }
   }, [currentView, currentImageIndex, images]);
 
-  useEffect(() => {
-    const handleKeyPress = (e) => {
-      if (currentView === "annotate") {
-        if (e.key === "s" && boxes.length > 0 && !isProcessing)
-          extractTextFromBoxes();
-        if (e.key === "u" && boxes.length > 0) setBoxes(boxes.slice(0, -1));
-        if (e.key === "n" && currentImageIndex < images.length - 1) {
-          setCurrentImageIndex(currentImageIndex + 1);
-          setBoxes([]);
-        }
-      }
-      if (currentView === "review" && extractedData.length > 0) {
-        if (e.key === "a") handleApprove();
-        if (e.key === "x") handleReject();
-        if (e.key === "e") {
-          setEditMode(!editMode);
-          setEditText(extractedData[reviewIndex].text);
-        }
-        if (e.key === "ArrowLeft" && reviewIndex > 0)
-          setReviewIndex(reviewIndex - 1);
-        if (e.key === "ArrowRight" && reviewIndex < extractedData.length - 1)
-          setReviewIndex(reviewIndex + 1);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyPress);
-    return () => window.removeEventListener("keydown", handleKeyPress);
-  }, [
-    currentView,
-    boxes,
-    currentImageIndex,
-    images.length,
-    reviewIndex,
-    extractedData,
-    editMode,
-    isProcessing,
-  ]);
-
-  const handleImageUpload = (e) => {
-    const files = Array.from(e.target.files);
-    const imageFiles = files.filter((f) => f.type.startsWith("image/"));
-    setImages(
-      imageFiles.map((f, i) => ({
-        id: i,
-        file: f,
-        name: f.name,
-        url: URL.createObjectURL(f),
-        processed: false,
-      }))
-    );
-    setCurrentView("annotate");
-  };
-
-  const drawCanvas = () => {
+  // --- Functions wrapped in useCallback where needed ---
+  const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const img = imageRef.current;
     if (!canvas || !img || !imageLoaded) return;
@@ -129,37 +74,29 @@ const OCRDatasetBuilder = () => {
     const ctx = canvas.getContext("2d");
     const rect = canvas.getBoundingClientRect();
 
-    // Set canvas size to match display size
     canvas.width = rect.width;
     canvas.height = rect.height;
 
-    // Enable high-quality rendering
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Calculate how to fit the image in the canvas
     const imgAspect = img.naturalWidth / img.naturalHeight;
     const canvasAspect = canvas.width / canvas.height;
 
     let drawWidth, drawHeight, offsetX, offsetY;
-
     if (imgAspect > canvasAspect) {
-      // Image is wider - fit to width
       drawWidth = canvas.width;
       drawHeight = canvas.width / imgAspect;
       offsetX = 0;
       offsetY = (canvas.height - drawHeight) / 2;
     } else {
-      // Image is taller - fit to height
       drawHeight = canvas.height;
       drawWidth = canvas.height * imgAspect;
       offsetX = (canvas.width - drawWidth) / 2;
       offsetY = 0;
     }
 
-    // Store the scale and offset for coordinate conversion
     canvas.dataset.scaleX = img.naturalWidth / drawWidth;
     canvas.dataset.scaleY = img.naturalHeight / drawHeight;
     canvas.dataset.offsetX = offsetX;
@@ -167,7 +104,6 @@ const OCRDatasetBuilder = () => {
     canvas.dataset.drawWidth = drawWidth;
     canvas.dataset.drawHeight = drawHeight;
 
-    // Draw the image
     ctx.save();
     ctx.translate(canvas.width / 2, canvas.height / 2);
     ctx.rotate((rotation * Math.PI) / 180);
@@ -199,36 +135,31 @@ const OCRDatasetBuilder = () => {
       );
       ctx.setLineDash([]);
     }
-  };
+  }, [boxes, currentBox, zoom, rotation, imageLoaded]);
 
   useEffect(() => {
     drawCanvas();
-  }, [boxes, currentBox, zoom, rotation, imageLoaded]);
+  }, [drawCanvas]);
 
   const handleMouseDown = (e) => {
     if (currentView !== "annotate") return;
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-
-    // Get mouse position relative to canvas
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Check if click is within the image bounds
     const offsetX = parseFloat(canvas.dataset.offsetX) || 0;
     const offsetY = parseFloat(canvas.dataset.offsetY) || 0;
     const drawWidth = parseFloat(canvas.dataset.drawWidth) || canvas.width;
     const drawHeight = parseFloat(canvas.dataset.drawHeight) || canvas.height;
 
-    // Only allow drawing within the image area
     if (
       x < offsetX ||
       x > offsetX + drawWidth ||
       y < offsetY ||
       y > offsetY + drawHeight
-    ) {
+    )
       return;
-    }
 
     setDrawing(true);
     setStartPoint({ x, y });
@@ -239,11 +170,9 @@ const OCRDatasetBuilder = () => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
 
-    // Get current mouse position
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
 
-    // Clamp to image bounds
     const offsetX = parseFloat(canvas.dataset.offsetX) || 0;
     const offsetY = parseFloat(canvas.dataset.offsetY) || 0;
     const drawWidth = parseFloat(canvas.dataset.drawWidth) || canvas.width;
@@ -264,7 +193,7 @@ const OCRDatasetBuilder = () => {
     if (!drawing || !currentBox) return;
 
     if (currentBox.width > 10 && currentBox.height > 10) {
-      setBoxes([...boxes, { ...currentBox, id: Date.now() }]);
+      setBoxes((prev) => [...prev, { ...currentBox, id: Date.now() }]);
     }
 
     setDrawing(false);
@@ -272,41 +201,33 @@ const OCRDatasetBuilder = () => {
     setCurrentBox(null);
   };
 
-  const extractCroppedImage = (box) => {
+  const extractCroppedImage = useCallback((box) => {
     const img = imageRef.current;
     const canvas = canvasRef.current;
     if (!img || !canvas) return "";
 
-    // Get the stored scale and offset values
     const scaleX = parseFloat(canvas.dataset.scaleX) || 1;
     const scaleY = parseFloat(canvas.dataset.scaleY) || 1;
     const offsetX = parseFloat(canvas.dataset.offsetX) || 0;
     const offsetY = parseFloat(canvas.dataset.offsetY) || 0;
 
-    // Convert canvas coordinates to image coordinates
     const imgX = (box.x - offsetX) * scaleX;
     const imgY = (box.y - offsetY) * scaleY;
     const imgWidth = box.width * scaleX;
     const imgHeight = box.height * scaleY;
 
-    // Ensure coordinates are within image bounds
     const clampedX = Math.max(0, Math.min(imgX, img.naturalWidth));
     const clampedY = Math.max(0, Math.min(imgY, img.naturalHeight));
     const clampedWidth = Math.min(imgWidth, img.naturalWidth - clampedX);
     const clampedHeight = Math.min(imgHeight, img.naturalHeight - clampedY);
 
-    // Create a temporary canvas for cropping
     const tempCanvas = document.createElement("canvas");
     tempCanvas.width = clampedWidth;
     tempCanvas.height = clampedHeight;
-
     const ctx = tempCanvas.getContext("2d");
 
-    // Enable high-quality rendering
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-
-    // Draw the cropped portion from the ORIGINAL image
     ctx.drawImage(
       img,
       clampedX,
@@ -319,111 +240,68 @@ const OCRDatasetBuilder = () => {
       clampedHeight
     );
 
-    // Return as high-quality PNG
     return tempCanvas.toDataURL("image/png", 1.0);
-  };
+  }, []);
 
-  const callGeminiOCR = async (imageDataUrl) => {
-    if (!settings.apiKey) {
-      return "⚠️ API Key not set";
-    }
+  const callGeminiOCR = useCallback(
+    async (imageDataUrl) => {
+      if (!settings.apiKey) return "⚠️ API Key not set";
 
-    try {
-      const base64Data = imageDataUrl.split(",")[1];
-
-      // FIXED: Using gemini-2.5-flash (current stable model - Dec 2024)
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.apiKey}`;
-
-      const requestBody = {
-        contents: [
-          {
-            parts: [
-              {
-                text: "Extract all text from this image. Return ONLY the extracted text without any explanation. Support Nepali, Hindi, and English text.",
-              },
-              {
-                inline_data: {
-                  mime_type: "image/png",
-                  data: base64Data,
+      try {
+        const base64Data = imageDataUrl.split(",")[1];
+        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${settings.apiKey}`;
+        const requestBody = {
+          contents: [
+            {
+              parts: [
+                {
+                  text: "Extract all text from this image. Return ONLY the extracted text without explanation. Support Nepali, Hindi, English.",
                 },
-              },
-            ],
+                { inline_data: { mime_type: "image/png", data: base64Data } },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.4,
+            topK: 32,
+            topP: 1,
+            maxOutputTokens: 2048,
           },
-        ],
-        generationConfig: {
-          temperature: 0.4,
-          topK: 32,
-          topP: 1,
-          maxOutputTokens: 2048,
-        },
-      };
+        };
 
-      console.log("Calling Gemini 1.5 Flash API...");
+        const response = await fetch(apiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        });
 
-      const response = await fetch(apiUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestBody),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("API Error:", errorText);
-
-        try {
-          const errorData = JSON.parse(errorText);
-          if (errorData.error?.message) {
-            return `[API Error: ${errorData.error.message}]`;
-          }
-        } catch (e) {
-          // ignore
+        if (!response.ok) {
+          const errorText = await response.text();
+          try {
+            const errorData = JSON.parse(errorText);
+            if (errorData.error?.message)
+              return `[API Error: ${errorData.error.message}]`;
+          } catch {}
+          return `[HTTP ${response.status}]`;
         }
 
-        if (response.status === 403) {
-          return `[Error 403: Check API key or enable Generative Language API]`;
+        const data = await response.json();
+        if (data.candidates?.length > 0) {
+          const extractedText =
+            data.candidates[0].content?.parts[0].text?.trim();
+          if (extractedText) return extractedText;
         }
-        if (response.status === 400) {
-          return `[Error 400: Invalid request - check API key]`;
-        }
-
-        return `[HTTP ${response.status}]`;
+        return "[No text detected]";
+      } catch (error) {
+        return `[Error: ${error.message}]`;
       }
+    },
+    [settings.apiKey]
+  );
 
-      const data = await response.json();
-      console.log("API Success!");
-
-      if (data.candidates && data.candidates.length > 0) {
-        const candidate = data.candidates[0];
-
-        if (candidate.content?.parts && candidate.content.parts.length > 0) {
-          const extractedText = candidate.content.parts[0].text?.trim();
-
-          if (extractedText) {
-            console.log("Extracted:", extractedText);
-            return extractedText;
-          }
-        }
-      }
-
-      if (data.error) {
-        return `[API Error: ${data.error.message}]`;
-      }
-
-      return "[No text detected]";
-    } catch (error) {
-      console.error("Exception:", error);
-      return `[Error: ${error.message}]`;
-    }
-  };
-
-  const extractTextFromBoxes = async () => {
-    if (boxes.length === 0) {
-      alert("⚠️ Please draw at least one bounding box!");
-      return;
-    }
-
+  const extractTextFromBoxes = useCallback(async () => {
+    if (boxes.length === 0)
+      return alert("⚠️ Please draw at least one bounding box!");
     if (!settings.apiKey) {
       alert("⚠️ Please set your Gemini API key in Settings first!");
       setCurrentView("settings");
@@ -436,89 +314,109 @@ const OCRDatasetBuilder = () => {
 
     for (let idx = 0; idx < boxes.length; idx++) {
       const box = boxes[idx];
-
       const croppedImageUrl = extractCroppedImage(box);
       const extractedText = await callGeminiOCR(croppedImageUrl);
-
       results.push({
         id: `${Date.now()}_${idx}`,
         imageId: currentImage.id,
         imageName: currentImage.name,
         boxIndex: idx,
-        box: box,
+        box,
         croppedImage: croppedImageUrl,
         text: extractedText,
-        confidence: 0.98, // 98% accuracy from Gemini API
+        confidence: 0.98,
         accuracy: 98,
         status: "pending",
         edited: false,
       });
     }
 
-    setExtractedData([...extractedData, ...results]);
-
-    const updatedImages = [...images];
-    updatedImages[currentImageIndex].processed = true;
-    setImages(updatedImages);
+    setExtractedData((prev) => [...prev, ...results]);
+    setImages((prev) => {
+      const updated = [...prev];
+      updated[currentImageIndex].processed = true;
+      return updated;
+    });
 
     setBoxes([]);
     setIsProcessing(false);
 
-    if (currentImageIndex < images.length - 1) {
+    if (currentImageIndex < images.length - 1)
       setCurrentImageIndex(currentImageIndex + 1);
-    } else {
+    else {
       setCurrentView("review");
       setReviewIndex(0);
     }
-  };
+  }, [
+    boxes,
+    settings.apiKey,
+    images,
+    currentImageIndex,
+    extractCroppedImage,
+    callGeminiOCR,
+  ]);
 
-  const handleApprove = () => {
-    const updated = [...extractedData];
-    updated[reviewIndex].status = "approved";
-    if (editMode) {
-      updated[reviewIndex].text = editText;
-      updated[reviewIndex].edited = true;
-      updated[reviewIndex].accuracy = 100; // Manual edit = 100% accuracy
-    }
-    setExtractedData(updated);
+  const handleApprove = useCallback(() => {
+    setExtractedData((prev) => {
+      const updated = [...prev];
+      updated[reviewIndex].status = "approved";
+      if (editMode) {
+        updated[reviewIndex].text = editText;
+        updated[reviewIndex].edited = true;
+        updated[reviewIndex].accuracy = 100;
+      }
+      return updated;
+    });
+
     setEditMode(false);
+    // Use functional update to avoid using extractedData.length directly
+    setReviewIndex((prevIndex) => {
+      const nextIndex = prevIndex + 1;
+      return nextIndex < extractedData.length ? nextIndex : prevIndex;
+    });
+  }, [editMode, editText, reviewIndex, extractedData]);
 
-    if (reviewIndex < extractedData.length - 1) {
-      setReviewIndex(reviewIndex + 1);
-    }
-  };
-
-  const handleReject = () => {
-    const updated = [...extractedData];
-    updated[reviewIndex].status = "rejected";
-    setExtractedData(updated);
+  const handleReject = useCallback(() => {
+    setExtractedData((prev) => {
+      const updated = [...prev];
+      updated[reviewIndex].status = "rejected";
+      return updated;
+    });
     setEditMode(false);
+    // Functional update avoids stale extractedData.length
+    setReviewIndex((prevIndex) => {
+      return prevIndex < extractedData.length - 1 ? prevIndex + 1 : prevIndex;
+    });
+  }, [reviewIndex, extractedData]);
 
-    if (reviewIndex < extractedData.length - 1) {
-      setReviewIndex(reviewIndex + 1);
-    }
+  const handleImageUpload = (e) => {
+    const files = Array.from(e.target.files).filter((f) =>
+      f.type.startsWith("image/")
+    );
+    setImages(
+      files.map((f, i) => ({
+        id: i,
+        file: f,
+        name: f.name,
+        url: URL.createObjectURL(f),
+        processed: false,
+      }))
+    );
+    setCurrentView("annotate");
   };
 
   const exportDatasetAsFolder = () => {
     const approved = extractedData.filter((d) => d.status === "approved");
+    if (approved.length === 0) return alert("No approved data to export!");
 
-    if (approved.length === 0) {
-      alert("No approved data to export!");
-      return;
-    }
-
-    // Create a download for each approved pair
     approved.forEach((item, index) => {
       setTimeout(() => {
         const uniqueId = `${Date.now()}_${index}`;
-
-        // Download PNG image
         const imgLink = document.createElement("a");
         imgLink.href = item.croppedImage;
         imgLink.download = `approved/${uniqueId}.png`;
         imgLink.click();
 
-        // Download text file
         const textBlob = new Blob([item.text], {
           type: "text/plain;charset=utf-8",
         });
@@ -532,7 +430,6 @@ const OCRDatasetBuilder = () => {
       }, index * 200);
     });
 
-    // Calculate accuracy stats
     const totalAccuracy = approved.reduce(
       (sum, item) => sum + item.accuracy,
       0
@@ -542,16 +439,57 @@ const OCRDatasetBuilder = () => {
 
     setTimeout(() => {
       alert(
-        `✅ Exported ${approved.length} image-text pairs to "approved" folder!\n\n` +
-          `📊 Dataset Statistics:\n` +
+        `✅ Exported ${approved.length} image-text pairs!\n` +
+          `📊 Dataset Stats:\n` +
           `• Average Accuracy: ${avgAccuracy}%\n` +
           `• AI Generated: ${approved.length - editedCount} (98% accuracy)\n` +
-          `• Human Verified: ${editedCount} (100% accuracy)\n\n` +
-          `📁 Files are being downloaded to your Downloads folder.\n` +
-          `Note: Browser will download files one by one.`
+          `• Human Verified: ${editedCount} (100% accuracy)`
       );
     }, approved.length * 200 + 500);
   };
+
+  // --- Keyboard shortcuts ---
+  useEffect(() => {
+    const handleKeyPress = (e) => {
+      if (currentView === "annotate") {
+        if (e.key === "s" && boxes.length > 0 && !isProcessing)
+          extractTextFromBoxes();
+        if (e.key === "u" && boxes.length > 0)
+          setBoxes((prev) => prev.slice(0, -1));
+        if (e.key === "n" && currentImageIndex < images.length - 1) {
+          setCurrentImageIndex((prev) => prev + 1);
+          setBoxes([]);
+        }
+      }
+      if (currentView === "review" && extractedData.length > 0) {
+        if (e.key === "a") handleApprove();
+        if (e.key === "x") handleReject();
+        if (e.key === "e") {
+          setEditMode((prev) => !prev);
+          setEditText(extractedData[reviewIndex]?.text || "");
+        }
+        if (e.key === "ArrowLeft" && reviewIndex > 0)
+          setReviewIndex((prev) => prev - 1);
+        if (e.key === "ArrowRight" && reviewIndex < extractedData.length - 1)
+          setReviewIndex((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyPress);
+    return () => window.removeEventListener("keydown", handleKeyPress);
+  }, [
+    currentView,
+    boxes.length,
+    currentImageIndex,
+    images.length,
+    reviewIndex,
+    extractedData,
+    editMode,
+    isProcessing,
+    handleApprove,
+    handleReject,
+    extractTextFromBoxes,
+  ]);
 
   return (
     <div>
